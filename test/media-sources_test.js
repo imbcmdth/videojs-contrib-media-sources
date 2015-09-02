@@ -17,6 +17,11 @@
       oldFlashTransmuxer,
       MockSegmentParser;
 
+  // Override default webWorkerURI for karma
+  if (!videojs.MediaSource.webWorkerURI) {
+    videojs.MediaSource.webWorkerURI = '/base/src/transmuxer_worker.js';
+  }
+
   module('General', {
     setup: function() {
       oldMediaSourceConstructor = window.MediaSource || window.WebKitMediaSource;
@@ -75,6 +80,22 @@
     var mediaSource = new videojs.MediaSource(),
         sourceBuffer = mediaSource.addSourceBuffer('video/mp2t');
 
+    // send fake buffers through to cause the creation of the source buffers
+    sourceBuffer.transmuxer_.onmessage({
+      data: {
+        action: 'data',
+        type: 'audio',
+        data: new Uint8Array(1).buffer
+      }
+    });
+    sourceBuffer.transmuxer_.onmessage({
+      data: {
+        action: 'data',
+        type: 'video',
+        data: new Uint8Array(1).buffer
+      }
+    });
+
     equal(mediaSource.sourceBuffers.length, 2, 'created two native buffers');
     equal(mediaSource.sourceBuffers[0].type,
           'audio/mp4;codecs=mp4a.40.2',
@@ -106,9 +127,6 @@
     equal(mp2tSegments[0].length, 1, 'did not alter the segment');
     equal(mp2tSegments[0][0], data[0], 'did not alter the segment');
 
-    mediaSource.sourceBuffers[1].appendBuffer = function(segment) {
-      mp4Segments.push(segment);
-    };
     // an init segment
     sourceBuffer.transmuxer_.onmessage({
       data: {
@@ -117,6 +135,12 @@
         data: new Uint8Array(1).buffer
       }
     });
+
+    // Source buffer is not created until after the muxer starts emitting data
+    mediaSource.sourceBuffers[0].appendBuffer = function(segment) {
+      mp4Segments.push(segment);
+    };
+
     // a media segment
     sourceBuffer.transmuxer_.onmessage({
       data: {
@@ -125,12 +149,41 @@
         data: new Uint8Array(1).buffer
       }
     });
-    equal(mp4Segments.length, 2, 'appended the segments');
+
+    // Segments are concatenated
+    equal(mp4Segments.length, 0, 'segments are not appended until after the `done` message');
+
+    // send `done` message
+    sourceBuffer.transmuxer_.onmessage({
+      data: {
+        action: 'done',
+      }
+    });
+
+    // Segments are concatenated
+    equal(mp4Segments.length, 1, 'appended the segments');
   });
 
   test('virtual buffers are updating if either native buffer is', function(){
     var mediaSource = new videojs.MediaSource(),
         sourceBuffer = mediaSource.addSourceBuffer('video/mp2t');
+
+    // send fake buffers through to cause the creation of the source buffers
+    sourceBuffer.transmuxer_.onmessage({
+      data: {
+        action: 'data',
+        type: 'video',
+        data: new Uint8Array(1).buffer
+      }
+    });
+    sourceBuffer.transmuxer_.onmessage({
+      data: {
+        action: 'data',
+        type: 'audio',
+        data: new Uint8Array(1).buffer
+      }
+    });
+
     mediaSource.sourceBuffers[0].updating = true;
     mediaSource.sourceBuffers[1].updating = false;
 
@@ -146,6 +199,23 @@
   test('virtual buffers have a position buffered if both native buffers do', function() {
     var mediaSource = new videojs.MediaSource(),
         sourceBuffer = mediaSource.addSourceBuffer('video/mp2t');
+
+    // send fake buffers through to cause the creation of the source buffers
+    sourceBuffer.transmuxer_.onmessage({
+      data: {
+        action: 'data',
+        type: 'video',
+        data: new Uint8Array(1).buffer
+      }
+    });
+    sourceBuffer.transmuxer_.onmessage({
+      data: {
+        action: 'data',
+        type: 'audio',
+        data: new Uint8Array(1).buffer
+      }
+    });
+
     mediaSource.sourceBuffers[0].buffered = videojs.createTimeRange(0, 10);
     mediaSource.sourceBuffers[1].buffered = videojs.createTimeRange(0, 7);
 
@@ -158,7 +228,6 @@
     var mediaSource = new videojs.MediaSource(),
         sourceBuffer = mediaSource.addSourceBuffer('video/mp2t');
     sourceBuffer.timestampOffset = 42;
-    sourceBuffer.appendBuffer(new Uint8Array(1));
 
     sourceBuffer.transmuxer_.onmessage({
       data: {
@@ -172,6 +241,11 @@
         action: 'data',
         type: 'video',
         data: new Uint8Array(1)
+      }
+    });
+    sourceBuffer.transmuxer_.onmessage({
+      data: {
+        action: 'done'
       }
     });
 
@@ -185,20 +259,7 @@
         updates = 0,
         updateends = 0,
         updatestarts = 0;
-    sourceBuffer.addEventListener('updatestart', function() {
-      updatestarts++;
-    });
-    sourceBuffer.addEventListener('update', function() {
-      updates++;
-    });
-    sourceBuffer.addEventListener('updateend', function() {
-      updateends++;
-    });
-    equal(updatestarts, 0, 'no updatestarts before an append');
-    equal(updates, 0, 'no updates before an append');
-    equal(updateends, 0, 'no updateends before an append');
 
-    sourceBuffer.appendBuffer(new Uint8Array(1));
     sourceBuffer.transmuxer_.onmessage({
       data: {
         action: 'data',
@@ -213,6 +274,27 @@
         data: new Uint8Array(1)
       }
     });
+
+    sourceBuffer.addEventListener('updatestart', function() {
+      updatestarts++;
+    });
+    sourceBuffer.addEventListener('update', function() {
+      updates++;
+    });
+    sourceBuffer.addEventListener('updateend', function() {
+      updateends++;
+    });
+
+    equal(updatestarts, 0, 'no updatestarts before a `done` message is received');
+    equal(updates, 0, 'no updates before a `done` message is received');
+    equal(updateends, 0, 'no updateends before a `done` message is received');
+
+    sourceBuffer.transmuxer_.onmessage({
+      data: {
+        action: 'done'
+      }
+    });
+
     // the video buffer begins updating first:
     sourceBuffer.videoBuffer_.updating = true;
     sourceBuffer.audioBuffer_.updating = false;
@@ -253,7 +335,8 @@
   });
 
   module('Flash MediaSource', {
-    setup: function() {
+    setup: function(assert) {
+      var swfObj;
       oldMediaSourceConstructor = window.MediaSource || window.WebKitMediaSource;
       window.MediaSource = null;
       window.WebKitMediaSource = null;
@@ -326,11 +409,7 @@
     this.getFlvHeader = function() {
       return new Uint8Array([1, 2, 3]);
     };
-    this.parseSegmentBinaryData = function(data) {
-      tags.push({
-        bytes: data
-      });
-    };
+    this.parseSegmentBinaryData = function(data) {};
     this.flushTags = function() {};
     this.tagsAvailable = function() {
       return this.tags_.length !== 0;

@@ -26,29 +26,6 @@ module.exports = function(grunt) {
         dest: 'build/transmuxer_worker.js'
       }
     },
-    uglify: {
-      webworker: {
-        src: '<%= importscripts.build.dest %>',
-        dest: 'build/transmuxer_worker.min.js'
-      },
-      mediasource: {
-        options: {
-          banner: '<%= banner %>'
-        },
-        src: [
-          'node_modules/mux.js/lib/stream.js',
-          'node_modules/mux.js/lib/exp-golomb.js',
-          'node_modules/mux.js/legacy/flv-tag.js',
-          'node_modules/mux.js/legacy/aac-stream.js',
-          'node_modules/mux.js/legacy/h264-stream.js',
-          'node_modules/mux.js/legacy/metadata-stream.js',
-          'node_modules/mux.js/legacy/h264-extradata.js',
-          'node_modules/mux.js/legacy/segment-parser.js',
-          '<%= blobify.build.dest %>'
-        ],
-        dest: 'dist/videojs-media-sources.min.js'
-      }
-    },
     concat: {
       dist: {
         options: {
@@ -72,6 +49,29 @@ module.exports = function(grunt) {
       build: {
         src: 'src/videojs-media-sources.js',
         dest: 'build/videojs-media-sources.js'
+      }
+    },
+    uglify: {
+      webworker: {
+        src: '<%= importscripts.build.dest %>',
+        dest: 'build/transmuxer_worker.min.js'
+      },
+      mediasource: {
+        options: {
+          banner: '<%= banner %>'
+        },
+        src: [
+          'node_modules/mux.js/lib/stream.js',
+          'node_modules/mux.js/lib/exp-golomb.js',
+          'node_modules/mux.js/legacy/flv-tag.js',
+          'node_modules/mux.js/legacy/aac-stream.js',
+          'node_modules/mux.js/legacy/h264-stream.js',
+          'node_modules/mux.js/legacy/metadata-stream.js',
+          'node_modules/mux.js/legacy/h264-extradata.js',
+          'node_modules/mux.js/legacy/segment-parser.js',
+          '<%= blobify.build.dest %>'
+        ],
+        dest: 'dist/videojs-media-sources.min.js'
       }
     },
     connect: {
@@ -149,7 +149,7 @@ module.exports = function(grunt) {
         // and only imports the file we are looking for
         if (node.type === 'NewExpression' &&
           node.callee.name === 'Worker' &&
-          node.arguments[0].value.indexOf('transmuxer_worker') > -1) {
+          node.arguments[0].right.value.indexOf('transmuxer_worker') > -1) {
           var inlineSrc = grunt.file.read(path.resolve(currentPath, '../build/transmuxer_worker.min.js'));
 
           // Replace the entire importScripts expression with the source of the file
